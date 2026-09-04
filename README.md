@@ -1,16 +1,11 @@
-# Система централизованного сбора и обработки событий с линуксовых эндпоинтов.
+# Netstream is a distributed event ingestion and processing pipeline for collecting system events from Linux endpoints and delivering them to a centralized processing layer.
 
-На каждой физ машине запускается агент, который читает системный источник событий: syslog (/var/log/syslog).
+Each endpoint runs an agent that reads events from the system syslog, normalizes them into a common representation, batches them by size or time threshold, and sends them to the central gateway over TCP. The transport uses a custom length-prefixed framing protocol consisting of a 4-byte network-order payload length followed by a JSON message. This allows the receiver to correctly handle partial reads, multiple messages within a single read, and TCP's byte-stream semantics.
 
-Агент приводит события к единому формату, батчит их (100 событий или 1 секунда) и отправляет на центральный сервак по TCP. Для TCP используется собственный
-length-prefixed протокол (4 байта network order + JSON payload), чтобы корректно обрабатывать поток байтов, частичные чтения и несколько сообщений за одно
-чтение.
+The central Gateway is implemented around asynchronous I/O with Boost.Asio. It accepts TCP connections, reconstructs application-level messages from the byte stream, validates and normalizes incoming events, classifies them, and passes them through a rule engine. Rules can transform specific system events, such as failed authentication attempts, kernel errors, or out-of-memory conditions, into structured alerts.
 
-Центральный сервис (Gateway) принимает события по TCP через async i/o (Boost.Asio), парсит входной протокол, валидирует поля, нормализует и классифицирует
-события, после чего прогоняет их через rule engine. Например, события с "failed password", kernel errors или OOM превращаются в алерты. Все нормализованные
-события и алерты публикуются в Kafka в отдельные топики: netstream.events и netstream.alerts.
+Normalized events and generated alerts are published to separate Kafka topics, netstream.events and netstream.alerts. A dedicated Consumer service reads these topics using manual offset commits and persists the resulting records to PostgreSQL. The database stores both normalized events and generated alerts and maintains indexes for common access patterns such as agent, timestamp, category, and severity.
 
-Отдельный сервис Consumer читает события из Kafka с manual offset commits и сохраняет данные в PostgreSQL. В БД хранятся принятые события и сработавшие
-алерты с индексами по agent_id, timestamp, category и severity.
+The system is split into independent ingestion, processing, messaging, and persistence stages, allowing event collection and downstream storage to operate independently. The implementation combines asynchronous TCP networking, explicit application-level framing, message-broker-based decoupling, rule-based processing, and transactional persistence.
 
 Технологии: C++17, Boost.Asio, nlohmann/json, Kafka(librdkafka), PostgreSQL(libpqxx).
